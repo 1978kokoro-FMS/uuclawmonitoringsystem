@@ -191,6 +191,36 @@ async function loadDashboard() {
             urgentActionsContainer.innerHTML = '<p class="no-data">긴급 조치사항이 없습니다.</p>';
         }
 
+        // 모니터링 중인 법령 목록
+        const { data: monitoringLaws, error: lawsListError } = await supabase
+            .from('laws')
+            .select('*')
+            .eq('is_active', true)
+            .order('created_at', { ascending: false });
+
+        if (lawsListError) throw lawsListError;
+
+        const monitoringLawsContainer = document.getElementById('monitoringLaws');
+        if (monitoringLaws && monitoringLaws.length > 0) {
+            monitoringLawsContainer.innerHTML = monitoringLaws.map(law => `
+                <div class="list-item">
+                    <div class="list-item-header">
+                        <div class="list-item-title">${utils.escapeHtml(law.law_name)}</div>
+                        <span class="badge badge-success">모니터링 중</span>
+                    </div>
+                    <div class="list-item-meta">
+                        법령ID: ${law.law_id} | 소관: ${law.ministry || '-'}
+                        ${law.enacted_date ? ` | 공포일: ${law.enacted_date.substring(0,4)}-${law.enacted_date.substring(4,6)}-${law.enacted_date.substring(6,8)}` : ''}
+                    </div>
+                    <div class="list-item-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="removeLawFromMonitoring('${law.law_id}')">❌ 제거</button>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            monitoringLawsContainer.innerHTML = '<p class="no-data">모니터링 중인 법령이 없습니다.</p>';
+        }
+
         // 마지막 업데이트 시간 표시
         document.getElementById('lastUpdate').textContent = 
             `마지막 업데이트: ${utils.formatDateTime(new Date())}`;
@@ -324,6 +354,19 @@ async function addToMonitoring() {
     if (!state.selectedLaw) return;
 
     try {
+        // 중복 체크
+        const { data: existing, error: checkError } = await supabase
+            .from('laws')
+            .select('*')
+            .eq('law_id', state.selectedLaw.law_id)
+            .eq('is_active', true)
+            .single();
+
+        if (existing) {
+            utils.showAlert('이미 모니터링 중인 법령입니다.', 'warning');
+            return;
+        }
+
         const { data, error } = await supabase
             .from('laws')
             .upsert({
@@ -332,19 +375,41 @@ async function addToMonitoring() {
                 law_type: state.selectedLaw.law_type,
                 ministry: state.selectedLaw.ministry,
                 enacted_date: state.selectedLaw.enacted_date,
-                content: state.selectedLaw.content,
+                serial_no: state.selectedLaw.serial_no,
+                promulgation_no: state.selectedLaw.promulgation_no,
                 is_active: true
             });
 
         if (error) throw error;
 
-        utils.showAlert('모니터링에 추가되었습니다.', 'success');
+        utils.showAlert(`"${state.selectedLaw.law_name}"가 모니터링에 추가되었습니다.`, 'success');
         document.getElementById('lawDetailModal').classList.remove('show');
         loadDashboard();
 
     } catch (error) {
         console.error('모니터링 추가 오류:', error);
         utils.showAlert('모니터링 추가 중 오류가 발생했습니다.', 'error');
+    }
+}
+
+// 모니터링에서 제거
+async function removeLawFromMonitoring(lawId) {
+    if (!confirm('이 법령을 모니터링에서 제거하시결습니까?')) return;
+
+    try {
+        const { error } = await supabase
+            .from('laws')
+            .update({ is_active: false })
+            .eq('law_id', lawId);
+
+        if (error) throw error;
+
+        utils.showAlert('모니터링에서 제거되었습니다.', 'success');
+        loadDashboard();
+
+    } catch (error) {
+        console.error('모니터링 제거 오류:', error);
+        utils.showAlert('모니터링 제거 중 오류가 발생했습니다.', 'error');
     }
 }
 
